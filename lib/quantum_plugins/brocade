@@ -38,6 +38,28 @@ function quantum_plugin_configure_l3_agent() {
 }
 
 function quantum_plugin_configure_plugin_agent() {
+    # Configure VCS_USERNAME, VCS_PASSWORD, and VCS_IPADDR in localrc for switch
+    # fabric authentication and set BRCD_PHYSICAL_INTERFACE to server's interface to 
+    # fabric.  Override other vars for a customized network environment
+    VCS_USERNAME=${VCS_USERNAME:-"admin"}
+    VCS_PASSWORD=${VCS_PASSWORD:-"password"}
+    VCS_IPADDR=${VCS_IPADDR:-"127.0.0.1"}
+    BRCD_OSTYPE=${BRCD_OSTYPE:-"NOS"}
+    PHYSICAL_NETWORK=${PHYSICAL_NETWORK:-"physnet1"}
+    TENANT_VLAN_RANGE=${TENANT_VLAN_RANGE:-"2:999"}
+    BRCD_PHYSICAL_INTERFACE=${BRCD_PHYSICAL_INTERFACE:-"eth2"}
+
+    iniset /$Q_PLUGIN_CONF_FILE SWITCH ostype $BRCD_OSTYPE
+    iniset /$Q_PLUGIN_CONF_FILE SWITCH address $VCS_IPADDR
+    iniset /$Q_PLUGIN_CONF_FILE SWITCH password $VCS_PASSWORD
+    iniset /$Q_PLUGIN_CONF_FILE SWITCH username $VCS_USERNAME
+
+    iniset /$Q_PLUGIN_CONF_FILE DATABASE sql_connection "mysql://root:$MYSQL_PASSWORD@$HOST_IP/brcd_quantum?charset=utf8"
+
+    iniset /$Q_PLUGIN_CONF_FILE PHYSICAL_INTERFACE physical_interface $PHYSICAL_NETWORK
+    iniset /$Q_PLUGIN_CONF_FILE VLANS network_vlan_ranges $PHYSICAL_NETWORK:$TENANT_VLAN_RANGE
+    iniset /$Q_PLUGIN_CONF_FILE LINUX_BRIDGE physical_interface_mappings $PHYSICAL_NETWORK:$BRCD_PHYSICAL_INTERFACE
+
     AGENT_BINARY="$QUANTUM_DIR/bin/quantum-linuxbridge-agent"
 }
 
@@ -51,9 +73,6 @@ function has_quantum_plugin_security_group() {
     return 0
 }
 
-function quantum_plugin_check_adv_test_requirements() {
-    is_service_enabled q-agt && is_service_enabled q-dhcp && return 0
-}
 
 # Restore xtrace
 $BRCD_XTRACE

@@ -1,0 +1,71 @@
+# uncomment to freshen each repo
+# RECLONE=yes
+
+# make faster
+OFFLINE=True
+
+NOVA_BRANCH=stable/grizzly
+CINDER_BRANCH=stable/grizzly
+GLANCE_BRANCH=stable/grizzly
+HORIZON_BRANCH=stable/grizzly
+KEYSTONE_BRANCH=stable/grizzly
+QUANTUM_BRANCH=stable/grizzly
+
+disable_service n-net
+enable_service q-svc
+enable_service q-agt
+enable_service q-dhcp
+enable_service q-l3
+enable_service q-meta
+enable_service quantum
+
+# SQL Service Catalog
+# KEYSTONE_CATALOG_BACKEND=sql
+
+DATABASE_PASSWORD=password
+ADMIN_PASSWORD=openstack
+RABBIT_PASSWORD=openstack
+SERVICE_PASSWORD=openstack
+SERVICE_TOKEN=openstack
+MYSQL_PASSWORD=password
+
+FLOATING_RANGE=192.168.10.0/24
+FIXED_RANGE=10.1.1.0/24
+FIXED_NETWORK_SIZE=256
+NETWORK_GATEWAY=10.1.1.1
+
+Q_PLUGIN=brocade
+# Q_PLUGIN="linuxbridge"
+# Q_PLUGIN_EXT="BrcdQuantum"
+ENABLE_TENANT_VLANS="True"
+PHYSICAL_NETWORK="physnet1"
+TENANT_VLAN_RANGE=901:950
+LB_PHYSICAL_INTERFACE=eth2
+
+DEST=/opt/stack
+SCREEN_LOGDIR=$DEST/logs/screen
+LOG=True
+LOGFILE=stack.sh.log
+LOGDAYS=1
+
+# if you don't like screen
+DEST=/opt/stack
+SCREEN_LOGDIR=$DEST/logs/screen
+
+# let's call the tenants private network demo1
+PRIVATE_NETWORK_NAME=demo1
+
+# HOST_NAME=$(hostname)
+# SERVICE_HOST_NAME=${HOST_NAME}
+SERVICE_HOST=10.17.88.93
+HOST_IP=10.17.88.93
+MYSQL_HOST=$SERVICE_HOST
+RABBIT_HOST=$SERVICE_HOST
+GLANCE_HOSTPORT=$SERVICE_HOST:9292
+KEYSTONE_AUTH_HOST=$SERVICE_HOST
+KEYSTONE_SERVICE_HOST=$SERVICE_HOST
+ 
+SCHEDULER=nova.scheduler.simple.SimpleScheduler
+
+SCREEN_HARDSTATUS="%{= Kw}%-w%{BW}%n %t%{-}%+w"
+

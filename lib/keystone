@@ -1,0 +1,328 @@
+# lib/keystone
+# Functions to control the configuration and operation of **Keystone**
+
+# Dependencies:
+# ``functions`` file
+# ``BASE_SQL_CONN``
+# ``SERVICE_HOST``, ``SERVICE_PROTOCOL``
+# ``SERVICE_TOKEN``
+# ``S3_SERVICE_PORT`` (template backend only)
+# ``STACK_USER``
+
+# ``stack.sh`` calls the entry points in this order:
+#
+# install_keystone
+# configure_keystone
+# init_keystone
+# start_keystone
+# create_keystone_accounts
+# stop_keystone
+# cleanup_keystone
+
+# Save trace setting
+XTRACE=$(set +o | grep xtrace)
+set +o xtrace
+
+
+# Defaults
+# --------
+
+# Set up default directories
+KEYSTONE_DIR=$DEST/keystone
+KEYSTONE_CONF_DIR=${KEYSTONE_CONF_DIR:-/etc/keystone}
+KEYSTONE_CONF=$KEYSTONE_CONF_DIR/keystone.conf
+KEYSTONE_PASTE_INI=${KEYSTONE_PASTE_INI:-$KEYSTONE_CONF_DIR/keystone-paste.ini}
+KEYSTONE_AUTH_CACHE_DIR=${KEYSTONE_AUTH_CACHE_DIR:-/var/cache/keystone}
+
+KEYSTONECLIENT_DIR=$DEST/python-keystoneclient
+
+# Select the backend for Keystone's service catalog
+KEYSTONE_CATALOG_BACKEND=${KEYSTONE_CATALOG_BACKEND:-sql}
+KEYSTONE_CATALOG=$KEYSTONE_CONF_DIR/default_catalog.templates
+
+# Select the backend for Tokens
+KEYSTONE_TOKEN_BACKEND=${KEYSTONE_TOKEN_BACKEND:-sql}
+
+# Select Keystone's token format
+# Choose from 'UUID' and 'PKI'
+KEYSTONE_TOKEN_FORMAT=${KEYSTONE_TOKEN_FORMAT:-PKI}
+
+# Set Keystone interface configuration
+KEYSTONE_AUTH_HOST=${KEYSTONE_AUTH_HOST:-$SERVICE_HOST}
+KEYSTONE_AUTH_PORT=${KEYSTONE_AUTH_PORT:-35357}
+KEYSTONE_AUTH_PORT_INT=${KEYSTONE_AUTH_PORT_INT:-35358}
+KEYSTONE_AUTH_PROTOCOL=${KEYSTONE_AUTH_PROTOCOL:-$SERVICE_PROTOCOL}
+
+# Public facing bits
+KEYSTONE_SERVICE_HOST=${KEYSTONE_SERVICE_HOST:-$SERVICE_HOST}
+KEYSTONE_SERVICE_PORT=${KEYSTONE_SERVICE_PORT:-5000}
+KEYSTONE_SERVICE_PORT_INT=${KEYSTONE_SERVICE_PORT_INT:-5001}
+KEYSTONE_SERVICE_PROTOCOL=${KEYSTONE_SERVICE_PROTOCOL:-$SERVICE_PROTOCOL}
+
+# Set the tenant for service accounts in Keystone
+SERVICE_TENANT_NAME=${SERVICE_TENANT_NAME:-service}
+
+
+# Functions
+# ---------
+
+# cleanup_keystone() - Remove residual data files, anything left over from previous
+# runs that a clean run would need to clean up
+function cleanup_keystone() {
+    # kill instances (nova)
+    # delete image files (glance)
+    # This function intentionally left blank
+    :
+}
+
+# configure_keystone() - Set config files, create data dirs, etc
+function configure_keystone() {
+    if [[ ! -d $KEYSTONE_CONF_DIR ]]; then
+        sudo mkdir -p $KEYSTONE_CONF_DIR
+    fi
+    sudo chown $STACK_USER $KEYSTONE_CONF_DIR
+
+    if [[ "$KEYSTONE_CONF_DIR" != "$KEYSTONE_DIR/etc" ]]; then
+        cp -p $KEYSTONE_DIR/etc/keystone.conf.sample $KEYSTONE_CONF
+        cp -p $KEYSTONE_DIR/etc/policy.json $KEYSTONE_CONF_DIR
+        if [[ -f "$KEYSTONE_DIR/etc/keystone-paste.ini" ]]; then
+            cp -p "$KEYSTONE_DIR/etc/keystone-paste.ini" "$KEYSTONE_PASTE_INI"
+        fi
+    fi
+    if [[ -f "$KEYSTONE_PASTE_INI" ]]; then
+        iniset "$KEYSTONE_CONF" paste_deploy config_file "$KEYSTONE_PASTE_INI"
+    else
+        # compatibility with mixed cfg and paste.deploy configuration
+        KEYSTONE_PASTE_INI="$KEYSTONE_CONF"
+    fi
+
+    # Rewrite stock ``keystone.conf``
+
+    if is_service_enabled ldap; then
+        #Set all needed ldap values
+        iniset $KEYSTONE_CONF ldap password  $LDAP_PASSWORD
+        iniset $KEYSTONE_CONF ldap user "dc=Manager,dc=openstack,dc=org"
+        iniset $KEYSTONE_CONF ldap suffix "dc=openstack,dc=org"
+        iniset $KEYSTONE_CONF ldap use_dumb_member "True"
+        iniset $KEYSTONE_CONF ldap user_attribute_ignore "enabled,email,tenants,tenantId"
+        iniset $KEYSTONE_CONF ldap tenant_attribute_ignore "enabled"
+        iniset $KEYSTONE_CONF ldap tenant_domain_id_attribute "businessCategory"
+        iniset $KEYSTONE_CONF ldap tenant_desc_attribute "description"
+        iniset $KEYSTONE_CONF ldap tenant_tree_dn "ou=Projects,dc=openstack,dc=org"
+        iniset $KEYSTONE_CONF ldap user_domain_id_attribute "businessCategory"
+        iniset $KEYSTONE_CONF ldap user_tree_dn "ou=Users,dc=openstack,dc=org"
+        iniset $KEYSTONE_CONF DEFAULT member_role_id "9fe2ff9ee4384b1894a90878d3e92bab"
+        iniset $KEYSTONE_CONF DEFAULT member_role_name "_member_"
+    fi
+
+    if [[  "$KEYSTONE_IDENTITY_BACKEND" == "ldap"  ]]; then
+        iniset $KEYSTONE_CONF identity driver "keystone.identity.backends.ldap.Identity"
+    fi
+
+    if is_service_enabled tls-proxy; then
+        # Set the service ports for a proxy to take the originals
+        iniset $KEYSTONE_CONF DEFAULT public_port $KEYSTONE_SERVICE_PORT_INT
+        iniset $KEYSTONE_CONF DEFAULT admin_port $KEYSTONE_AUTH_PORT_INT
+    fi
+
+    iniset $KEYSTONE_CONF DEFAULT admin_token "$SERVICE_TOKEN"
+    iniset $KEYSTONE_CONF signing token_format "$KEYSTONE_TOKEN_FORMAT"
+    iniset $KEYSTONE_CONF sql connection `database_connection_url keystone`
+    iniset $KEYSTONE_CONF ec2 driver "keystone.contrib.ec2.backends.sql.Ec2"
+
+    if [[ "$KEYSTONE_TOKEN_BACKEND" = "sql" ]]; then
+        iniset $KEYSTONE_CONF token driver keystone.token.backends.sql.Token
+    else
+        iniset $KEYSTONE_CONF token driver keystone.token.backends.kvs.Token
+    fi
+
+    if [[ "$KEYSTONE_CATALOG_BACKEND" = "sql" ]]; then
+        # Configure ``keystone.conf`` to use sql
+        iniset $KEYSTONE_CONF catalog driver keystone.catalog.backends.sql.Catalog
+        inicomment $KEYSTONE_CONF catalog template_file
+    else
+        cp -p $FILES/default_catalog.templates $KEYSTONE_CATALOG
+
+        # Add swift endpoints to service catalog if swift is enabled
+        if is_service_enabled s-proxy; then
+            echo "catalog.RegionOne.object_store.publicURL = http://%SERVICE_HOST%:8080/v1/AUTH_\$(tenant_id)s" >> $KEYSTONE_CATALOG
+            echo "catalog.RegionOne.object_store.adminURL = http://%SERVICE_HOST%:8080/" >> $KEYSTONE_CATALOG
+            echo "catalog.RegionOne.object_store.internalURL = http://%SERVICE_HOST%:8080/v1/AUTH_\$(tenant_id)s" >> $KEYSTONE_CATALOG
+            echo "catalog.RegionOne.object_store.name = Swift Service" >> $KEYSTONE_CATALOG
+        fi
+
+        # Add quantum endpoints to service catalog if quantum is enabled
+        if is_service_enabled quantum; then
+            echo "catalog.RegionOne.network.publicURL = http://%SERVICE_HOST%:$Q_PORT/" >> $KEYSTONE_CATALOG
+            echo "catalog.RegionOne.network.adminURL = http://%SERVICE_HOST%:$Q_PORT/" >> $KEYSTONE_CATALOG
+            echo "catalog.RegionOne.network.internalURL = http://%SERVICE_HOST%:$Q_PORT/" >> $KEYSTONE_CATALOG
+            echo "catalog.RegionOne.network.name = Quantum Service" >> $KEYSTONE_CATALOG
+        fi
+
+        sed -e "
+            s,%SERVICE_HOST%,$SERVICE_HOST,g;
+            s,%S3_SERVICE_PORT%,$S3_SERVICE_PORT,g;
+        " -i $KEYSTONE_CATALOG
+
+        # Configure ``keystone.conf`` to use templates
+        iniset $KEYSTONE_CONF catalog driver "keystone.catalog.backends.templated.TemplatedCatalog"
+        iniset $KEYSTONE_CONF catalog template_file "$KEYSTONE_CATALOG"
+    fi
+
+    # Set up logging
+    LOGGING_ROOT="devel"
+    if [ "$SYSLOG" != "False" ]; then
+        LOGGING_ROOT="$LOGGING_ROOT,production"
+    fi
+    KEYSTONE_LOG_CONFIG="--log-config $KEYSTONE_CONF_DIR/logging.conf"
+    cp $KEYSTONE_DIR/etc/logging.conf.sample $KEYSTONE_CONF_DIR/logging.conf
+    iniset $KEYSTONE_CONF_DIR/logging.conf logger_root level "DEBUG"
+    iniset $KEYSTONE_CONF_DIR/logging.conf logger_root handlers "devel,production"
+}
+
+# create_keystone_accounts() - Sets up common required keystone accounts
+
+# Tenant               User       Roles
+# ------------------------------------------------------------------
+# service              --         --
+# --                   --         Member
+# admin                admin      admin
+# demo                 admin      admin
+# demo                 demo       Member, anotherrole
+# invisible_to_admin   demo       Member
+
+# Migrated from keystone_data.sh
+create_keystone_accounts() {
+
+    # admin
+    ADMIN_TENANT=$(keystone tenant-create \
+        --name admin \
+        | grep " id " | get_field 2)
+    ADMIN_USER=$(keystone user-create \
+        --name admin \
+        --pass "$ADMIN_PASSWORD" \
+        --email admin@example.com \
+        | grep " id " | get_field 2)
+    ADMIN_ROLE=$(keystone role-create \
+        --name admin \
+        | grep " id " | get_field 2)
+    keystone user-role-add \
+        --user_id $ADMIN_USER \
+        --role_id $ADMIN_ROLE \
+        --tenant_id $ADMIN_TENANT
+
+    # service
+    SERVICE_TENANT=$(keystone tenant-create \
+        --name $SERVICE_TENANT_NAME \
+        | grep " id " | get_field 2)
+
+    # The Member role is used by Horizon and Swift so we need to keep it:
+    MEMBER_ROLE=$(keystone role-create --name=Member | grep " id " | get_field 2)
+    # ANOTHER_ROLE demonstrates that an arbitrary role may be created and used
+    # TODO(sleepsonthefloor): show how this can be used for rbac in the future!
+    ANOTHER_ROLE=$(keystone role-create --name=anotherrole | grep " id " | get_field 2)
+
+    # invisible tenant - admin can't see this one
+    INVIS_TENANT=$(keystone tenant-create --name=invisible_to_admin | grep " id " | get_field 2)
+
+    # demo
+    DEMO_TENANT=$(keystone tenant-create \
+        --name=demo \
+        | grep " id " | get_field 2)
+    DEMO_USER=$(keystone user-create \
+        --name demo \
+        --pass "$ADMIN_PASSWORD" \
+        --email demo@example.com \
+        | grep " id " | get_field 2)
+    keystone user-role-add --user_id $DEMO_USER --role_id $MEMBER_ROLE --tenant_id $DEMO_TENANT
+    keystone user-role-add --user_id $ADMIN_USER --role_id $ADMIN_ROLE --tenant_id $DEMO_TENANT
+    keystone user-role-add --user_id $DEMO_USER --role_id $ANOTHER_ROLE --tenant_id $DEMO_TENANT
+    keystone user-role-add --user_id $DEMO_USER --role_id $MEMBER_ROLE --tenant_id $INVIS_TENANT
+
+    # Keystone
+    if [[ "$KEYSTONE_CATALOG_BACKEND" = 'sql' ]]; then
+        KEYSTONE_SERVICE=$(keystone service-create \
+            --name keystone \
+            --type identity \
+            --description "Keystone Identity Service" \
+            | grep " id " | get_field 2)
+        keystone endpoint-create \
+            --region RegionOne \
+            --service_id $KEYSTONE_SERVICE \
+            --publicurl "$KEYSTONE_SERVICE_PROTOCOL://$KEYSTONE_SERVICE_HOST:$KEYSTONE_SERVICE_PORT/v2.0" \
+            --adminurl "$KEYSTONE_AUTH_PROTOCOL://$KEYSTONE_AUTH_HOST:$KEYSTONE_AUTH_PORT/v2.0" \
+            --internalurl "$KEYSTONE_SERVICE_PROTOCOL://$KEYSTONE_SERVICE_HOST:$KEYSTONE_SERVICE_PORT/v2.0"
+    fi
+}
+
+# init_keystone() - Initialize databases, etc.
+function init_keystone() {
+    # (Re)create keystone database
+    recreate_database keystone utf8
+
+    # Initialize keystone database
+    $KEYSTONE_DIR/bin/keystone-manage db_sync
+
+    if [[ "$KEYSTONE_TOKEN_FORMAT" == "PKI" ]]; then
+        # Set up certificates
+        rm -rf $KEYSTONE_CONF_DIR/ssl
+        $KEYSTONE_DIR/bin/keystone-manage pki_setup
+
+        # Create cache dir
+        sudo mkdir -p $KEYSTONE_AUTH_CACHE_DIR
+        sudo chown $STACK_USER $KEYSTONE_AUTH_CACHE_DIR
+        rm -f $KEYSTONE_AUTH_CACHE_DIR/*
+    fi
+}
+
+# install_keystoneclient() - Collect source and prepare
+function install_keystoneclient() {
+    git_clone $KEYSTONECLIENT_REPO $KEYSTONECLIENT_DIR $KEYSTONECLIENT_BRANCH
+    setup_develop $KEYSTONECLIENT_DIR
+}
+
+# install_keystone() - Collect source and prepare
+function install_keystone() {
+    # only install ldap if the service has been enabled
+    if is_service_enabled ldap; then
+        install_ldap
+    fi
+    git_clone $KEYSTONE_REPO $KEYSTONE_DIR $KEYSTONE_BRANCH
+    setup_develop $KEYSTONE_DIR
+}
+
+# start_keystone() - Start running processes, including screen
+function start_keystone() {
+    # Get right service port for testing
+    local service_port=$KEYSTONE_SERVICE_PORT
+    if is_service_enabled tls-proxy; then
+        service_port=$KEYSTONE_SERVICE_PORT_INT
+    fi
+
+    # Start Keystone in a screen window
+    screen_it key "cd $KEYSTONE_DIR && $KEYSTONE_DIR/bin/keystone-all --config-file $KEYSTONE_CONF $KEYSTONE_LOG_CONFIG -d --debug"
+    echo "Waiting for keystone to start..."
+    if ! timeout $SERVICE_TIMEOUT sh -c "while ! http_proxy= curl -s http://$SERVICE_HOST:$service_port/v2.0/ >/dev/null; do sleep 1; done"; then
+      die $LINENO "keystone did not start"
+    fi
+
+    # Start proxies if enabled
+    if is_service_enabled tls-proxy; then
+        start_tls_proxy '*' $KEYSTONE_SERVICE_PORT $KEYSTONE_SERVICE_HOST $KEYSTONE_SERVICE_PORT_INT &
+        start_tls_proxy '*' $KEYSTONE_AUTH_PORT $KEYSTONE_AUTH_HOST $KEYSTONE_AUTH_PORT_INT &
+    fi
+}
+
+# stop_keystone() - Stop running processes
+function stop_keystone() {
+    # Kill the Keystone screen window
+    screen -S $SCREEN_NAME -p key -X kill
+}
+
+
+# Restore xtrace
+$XTRACE
+
+# Local variables:
+# mode: shell-script
+# End:

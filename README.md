@@ -9,7 +9,7 @@ Ubuntu or Fedora bases systems.  See the devstack github page or http://devstack
 for additional information on configuration and setup.
 
 This repo allows for additional configuration setup of the Brocade VCS plugin for 
-OpenStack networking (aka quan^H^H^Hneutron).  The following additional parameters can 
+OpenStack networking (aka qua^H^H^Hneutron).  The following additional parameters can 
 be added to the localrc to help configure the neutron plugin:
 
     * VCS_USERNAME: user login for the Brocade VCS fabric(defaults to admin)
@@ -158,15 +158,15 @@ As new instances are launched, they should be tied to the port-profile correspon
 network they belong to.  Any instances on the same network should be able to communicate
 with each other.
 
-VDX1# show port-profile status
-Port-Profile                        PPID        Activated        Associated MAC Interface
-openstack-profile-2                 1           Yes              fa16.3e1b.95d0 None
-                                                                 fa16.3e64.fce8        Gi 2/0/28
-                                                                 fa16.3e85.5b2f        Gi 2/0/28
-                                                                 fa16.3ea6.3741        Gi 2/0/5
-                                                                 fa16.3ecd.bfc1        Gi 2/0/5
-                                                                 fa16.3eeb.87f7        Gi 2/0/28
-openstack-profile-3                 2           Yes              fa16.3e2c.0baf        None
+    VDX1# show port-profile status
+    Port-Profile                        PPID        Activated        Associated MAC Interface
+    openstack-profile-2                 1           Yes              fa16.3e1b.95d0 None
+                                                                     fa16.3e64.fce8        Gi 2/0/28
+                                                                     fa16.3e85.5b2f        Gi 2/0/28
+                                                                     fa16.3ea6.3741        Gi 2/0/5
+                                                                     fa16.3ecd.bfc1        Gi 2/0/5
+                                                                     fa16.3eeb.87f7        Gi 2/0/28
+    openstack-profile-3                 2           Yes              fa16.3e2c.0baf        None
 
 References
 ----------

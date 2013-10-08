@@ -76,8 +76,8 @@ configuration
 
 As stack user, install this devstack repo in the home directory
 
-    # git clone http://github.com/openstack-dev/devstack.git
-    # cd devstack
+    # git clone https://github.com/jrametta/devstack-brocade
+    # cd devstack-brocade
 
 Edit the localrc in the devstack directory.  An example might look like this:
 
